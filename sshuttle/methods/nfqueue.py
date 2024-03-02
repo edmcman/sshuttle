@@ -5,6 +5,10 @@ from sshuttle.linux import ipt, ipt_chain_exists
 from sshuttle.methods import BaseMethod
 from sshuttle.helpers import debug1, debug2, debug3, Fatal, which
 
+import netfilterqueue
+import threading
+
+
 import socket
 import os
 
@@ -93,26 +97,42 @@ class Method(BaseMethod):
         sender.sendto(data, dstip)
         sender.close()
 
-    def setup_tcp_listener(self, tcp_listener):
-        try:
-            tcp_listener.setsockopt(socket.SOL_IP, IP_TRANSPARENT, 1)
-        except PermissionError as e:
-            self.setsockopt_error(e)
+    def setup_worker(self, tmark):
 
-    def setup_udp_listener(self, udp_listener):
-        try:
-            udp_listener.setsockopt(socket.SOL_IP, IP_TRANSPARENT, 1)
-        except PermissionError as e:
-            self.setsockopt_error(e)
+        if hasattr(self, "worker_thread"):
+            debug3("Not creating duplicate worker thread")
+            return
 
-        if udp_listener.v4 is not None:
-            udp_listener.v4.setsockopt(
-                socket.SOL_IP, IP_RECVORIGDSTADDR, 1)
-        if udp_listener.v6 is not None:
-            udp_listener.v6.setsockopt(SOL_IPV6, IPV6_RECVORIGDSTADDR, 1)
+        def queue_worker():
+            def print_and_accept(pkt):
+                debug1(str(pkt))
+                pkt.accept()
+
+            nfqueue = netfilterqueue.NetfilterQueue()
+            nfqueue.bind(tmark, print_and_accept)
+            s = socket.fromfd(nfqueue.get_fd(), socket.AF_UNIX, socket.SOCK_STREAM)
+            try:
+                nfqueue.run_socket(s)
+            except KeyboardInterrupt:
+                print('')
+
+            debug1("queue_worker exiting")
+
+            s.close()
+            nfqueue.unbind()
+
+        # Create a thread object that will execute the worker function
+        self.worker_thread = threading.Thread(target=queue_worker)
+        self.worker_thread.daemon = True
+        self.worker_thread.start()
+        #queue_worker()
+        
 
     def setup_firewall(self, port, dnsport, nslist, family, subnets, udp,
                        user, group, tmark):
+        
+        self.setup_worker(int(tmark, 16))
+
         if family not in [socket.AF_INET, socket.AF_INET6]:
             raise Exception(
                 'Address family "%s" unsupported by nfqueue method'
@@ -139,7 +159,7 @@ class Method(BaseMethod):
         _ipt('-F', filter_chain)
         _ipt('-I', 'OUTPUT', '1', '-j', filter_chain)
 
-        _ipt('-A', nfqueue_chain, '-j', 'NFQUEUE', '--queue-num', str(port))
+        _ipt('-A', nfqueue_chain, '-j', 'NFQUEUE', '--queue-num', tmark)
         # If not accepted, reject the connection.
         _ipt('-A', nfqueue_chain, '-j', 'REJECT')
 
