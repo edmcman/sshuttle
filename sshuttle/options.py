@@ -236,7 +236,7 @@ parser.add_argument(
 
 parser.add_argument(
     "--method",
-    choices=["auto", "nat", "nft", "tproxy", "pf", "ipfw"],
+    choices=["auto", "nat", "nft", "tproxy", "pf", "ipfw", "nfqueue"],
     metavar="TYPE",
     default="auto",
     help="""
