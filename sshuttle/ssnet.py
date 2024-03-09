@@ -315,8 +315,14 @@ class Proxy(Handler):
             _add(r, self.wrap2.rsock)
 
     def callback(self, sock):
+        still_connecting = self.wrap2.connect_to is not None
         self.wrap1.try_connect()
         self.wrap2.try_connect()
+        newly_connected = still_connecting and self.wrap2.connect_to is None
+        if newly_connected:
+            log("We just connected! XXX send a message back to the client now?")
+        if self.wrap2.exc is not None:
+            log("Exception when connecting. XXX send a message back to the client now?")
         self.wrap1.fill()
         self.wrap2.fill()
         self.wrap1.copy_to(self.wrap2)
